@@ -248,8 +248,8 @@ class EMGEPN100(Dataset):
                         odh.devices.append(np.ones((len(emg), 1)) * device)
                         odh.sampling_rates.append(np.ones((len(emg), 1)) * fs)
 
-                        if segment and gst != 0:
-                            assert isinstance(relabel_seg, int)
+                        if segment and gst != 0 and relabel_seg is not None:
+                            assert type(relabel_seg) is int
                             gst = relabel_seg
 
                             emg = _emg[:point_begins]
@@ -269,7 +269,7 @@ class EMGEPN100(Dataset):
     def prepare_data(self,
                     split: bool = False,
                     segment: bool = True,
-                    relabel_seg: bool | int = False,
+                    relabel_seg: int | None = None,
                     channel_last: bool = True,
                     subjects: Iterable[int] | None = None) -> OfflineDataHandler:
         """Return processed EPN100 dataset as LibEMG ODH.
@@ -284,7 +284,7 @@ class EMGEPN100(Dataset):
             Window stride (increment) size in ms (for feature extraction). There are two different sensors used in this dataset with different sampling rates.
         segment: bool, default=True 
             Whether crop the segment before 'pointGestureBeging' index in the dataset.
-        relabel_seg: bool or int, default=0 
+        relabel_seg: int or None (optional), default=0 
             If not False, this arg will be used as the relabeling value.
         channel_last: bool, default=True,
             Shape will be (, T, CH) if True otherwise (, CH, T)
