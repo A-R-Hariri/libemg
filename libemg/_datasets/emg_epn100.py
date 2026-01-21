@@ -1,7 +1,6 @@
 from libemg._datasets.dataset import Dataset
 from libemg.data_handler import OfflineDataHandler
 import numpy as np
-from libemg.feature_extractor import FeatureExtractor
 from libemg.utils import *
 import os
 import warnings
@@ -51,7 +50,7 @@ DEVICE_MAP = {
 }
 
 
-############ UTILS ############
+# ======== UTILS ========
 def to_scalar(x):
     if isinstance(x, np.ndarray) and x.size == 1:
         return x.item()
@@ -68,7 +67,7 @@ def write_h5_scalar(group: h5py.Group, name, value):
         group.create_dataset(name, data=np.array(str(value), dtype=dt))
 
 
-############ METADATA EXTRACTION ############
+# ======== METADATA EXTRACTION ========
 def extract_metadata(userData) -> Dict[str, Any]:
     meta = {}
 
@@ -130,12 +129,14 @@ def process_user(
                 classe = GESTURE_MAP[gesture]
 
                 emg = np.asarray(entry.emg, dtype=np.float32)
+                point_begins = np.asarray(entry.pointGestureBegins, dtype=np.int64)
 
                 rep_grp = reps_grp.create_group(f"rep_{rep_id:03d}")
                 rep_grp.create_dataset("emg", data=emg)
                 rep_grp.create_dataset("gesture", data=classe)
                 rep_grp.create_dataset("subject", data=subject_id)
                 rep_grp.create_dataset("rep", data=rep_id)
+                rep_grp.create_dataset("point_begins", data=point_begins)
 
                 reps_written += 1
 
@@ -151,7 +152,7 @@ def process_user(
             f"output={out_path}")
 
 
-############ DATASET WALKER ############
+# ======== DATASET WALKER ========
 def process_dataset(root_in: str, root_out: str):
     for split in ["training", "testing"]:
         in_split = os.path.join(root_in, split)
@@ -172,30 +173,25 @@ def process_dataset(root_in: str, root_out: str):
             process_user(mat_path=mat_path, out_path=out_path,
                         subject_id=subject_id, 
                         is_training_group=(split == "training"))
+
+# ======== MAIN DATASET CLASS ========
 class EMGEPN100(Dataset):
     def __init__(self, dataset_folder: str='DATASET_85'):
-        super().__init__(self, 
-                         smapling=(200, 500), 
-                         num_channels=(8, 8), 
-                         recording_device=('Myo', 'gForce'), 
+        Dataset.__init__(self, 
+                         sampling={'Myo': 200, 'gForce': 500}, 
+                         num_channels={'Myo': 8, 'gForce': 8}, 
+                         recording_device=['Myo', 'gForce'], 
                          num_subjects=85, 
                          gestures= GESTURE_MAP,      # Matches EPN-612 static classes IDs
                          num_reps="30 Reps x 12 Gestures x 43 Users (Train group), 15 Reps x 12 Gestures x 42 Users (Test group) --> Cross User Split",
                          description="EMG dataset for 12 different hand gesture categories using the Myo armband and the G-force armband.", 
                          citation="https://doi.org/10.3390/s22249613")
-        self.resolution_bit = (8, 12)
+        self.resolution_bit = {'Myo': 8, 'gForce': 12}
         self.dataset_folder = dataset_folder
         self.url = "https://laboratorio-ia.epn.edu.ec/es/recursos/dataset/emg-imu-epn-100"
 
-    def _get_odh(self, processed_root, subjects, segment,
-                    relabel_seg, window_ms, stride_ms, 
-                    channel_first, feature_list, feature_dic):
-        
-        if feature_list or window_ms or stride_ms:
-            assert feature_list
-            assert window_ms
-            assert stride_ms
-            fe = FeatureExtractor()
+    def _get_odh(self, processed_root, subjects, 
+                 segment, relabel_seg, channel_last):
 
         splits = {"training", "testing"}
         odhs = []
@@ -204,13 +200,22 @@ class EMGEPN100(Dataset):
             split_dir = os.path.join(processed_root, split)
             user_files = sorted(f for f in os.listdir(split_dir) if f.endswith(".h5"))
 
+            odh = OfflineDataHandler()
+            odh.subjects = []
+            odh.classes = []
+            odh.reps = []
+            odh.devices = []
+            odh.sampling_rates = []
+            odh.extra_attributes = ['subjects', 'classes', 'reps',
+                                    'devices', 'sampling_rates']
+
             for user_file in user_files:
                 path = os.path.join(split_dir, user_file)
 
                 with h5py.File(path, "r") as f:
                     subject = int(f["reps"]["rep_000"]["subject"][()])
-                    subject += 43 if split == "testing" else 0
-                    if subject is not None:
+                    subject += 43 if split == "testing" else 0                      # 43 training group subjects and 42 testing
+                    if subjects is not None:
                         if subject not in subjects:
                             continue
 
@@ -219,12 +224,6 @@ class EMGEPN100(Dataset):
                     device = DEVICE_MAP[device_str]
                     fs = float(f["meta/deviceInfo/emgSamplingRate"][()])
 
-                    win_len = int(np.ceil(window_ms * fs / 1000.0))
-                    stride_len = int(np.ceil(stride_ms * fs / 1000.0))
-
-                    if win_len <= 0 or stride_len <= 0:
-                        raise ValueError("Window or stride length <= 0 samples")
-
                     for rep_name in reps:
                         rep_grp = reps[rep_name]
 
@@ -232,68 +231,35 @@ class EMGEPN100(Dataset):
                         rep_id = int(rep_grp["rep"][()])
 
                         _emg = rep_grp["emg"][:].astype(np.float32, copy=False)      # [T, CH]
-                        if channel_first:
-                            _emg = np.transpose(_emg, (0, 2, 1))                      # [CH, T]
+                        if not channel_last:
+                            _emg = np.transpose(_emg, (1, 0))                        # [CH, T]
 
                         if segment and gst != 0:
-                            point_begin =  int(f["meta/deviceInfo/pointGestureBeging"][()])
-                            emg = _emg[point_begin:]
+                            point_begins =  rep_grp["point_begins"][()]
+                            emg = _emg[point_begins:]
+                        else:
+                            emg = _emg
 
                         # ---- Preparing ODH ----
-                        odh = OfflineDataHandler()
-                        odh.subjects = []
-                        odh.classes = []
-                        odh.reps = []
-                        odh.devices = []
-                        odh.sampling_rates = []
+                        odh.data.append(emg)
+                        odh.classes.append(np.ones((len(emg), 1)) * gst)
+                        odh.subjects.append(np.ones((len(emg), 1)) * subject)
+                        odh.reps.append(np.ones((len(emg), 1)) * rep_id)
+                        odh.devices.append(np.ones((len(emg), 1)) * device)
+                        odh.sampling_rates.append(np.ones((len(emg), 1)) * fs)
 
-                        if feature_list:
-                            T = emg.shape[0]
-                            if T < win_len:
-                                continue
+                        if segment and gst != 0:
+                            assert isinstance(relabel_seg, int)
+                            gst = relabel_seg
 
-                            odh.data.append(fe.extract_features(feature_list, get_windows(emg, win_len, win_len), 
-                                                                   feature_dic=feature_dic, array=True))                
-                            odh.classes.append(np.ones((len(odh.data[-1]), 1), dtype=np.int64) * gst)
-                            odh.subjects.append(np.ones((len(odh.data[-1]), 1), dtype=np.int64) * subject)
-                            odh.reps.append(np.ones((len(odh.data[-1]), 1), dtype=np.int64) * rep_id)
-                            odh.devices.append(np.ones((len(odh.data[-1]), 1), dtype=np.int64) * device)
-                            odh.sampling_rates.append(np.ones((len(odh.data[-1]), 1), dtype=np.int64) * fs)
+                            emg = _emg[:point_begins]
 
-                        else:
                             odh.data.append(emg)
                             odh.classes.append(np.ones((len(emg), 1)) * gst)
                             odh.subjects.append(np.ones((len(emg), 1)) * subject)
                             odh.reps.append(np.ones((len(emg), 1)) * rep_id)
                             odh.devices.append(np.ones((len(emg), 1)) * device)
                             odh.sampling_rates.append(np.ones((len(emg), 1)) * fs)
-
-                        if segment and gst != 0:
-                            assert isinstance(relabel_seg, int)
-                            gst = relabel_seg
-
-                            emg = _emg[:point_begin]
-
-                            if feature_list:
-                                T = emg.shape[0]
-                                if T < win_len:
-                                    continue
-
-                                odh.data.append(fe.extract_features(feature_list, get_windows(emg, win_len, win_len), 
-                                                                    feature_dic=feature_dic, array=True))                
-                                odh.classes.append(np.ones((len(odh.data[-1]), 1), dtype=np.int64) * gst)
-                                odh.subjects.append(np.ones((len(odh.data[-1]), 1), dtype=np.int64) * subject)
-                                odh.reps.append(np.ones((len(odh.data[-1]), 1), dtype=np.int64) * rep_id)
-                                odh.devices.append(np.ones((len(odh.data[-1]), 1), dtype=np.int64) * device)
-                                odh.sampling_rates.append(np.ones((len(odh.data[-1]), 1), dtype=np.int64) * fs)
-
-                            else:
-                                odh.data.append(emg)
-                                odh.classes.append(np.ones((len(emg), 1)) * gst)
-                                odh.subjects.append(np.ones((len(emg), 1)) * subject)
-                                odh.reps.append(np.ones((len(emg), 1)) * rep_id)
-                                odh.devices.append(np.ones((len(emg), 1)) * device)
-                                odh.sampling_rates.append(np.ones((len(emg), 1)) * fs)
 
             odhs.append(odh)
 
@@ -302,14 +268,10 @@ class EMGEPN100(Dataset):
 
     def prepare_data(self,
                     split: bool = False,
-                    window_ms: float | None = None,
-                    stride_ms: float | None = None,
-                    segment: bool = False,
-                    relabel_seg: int = 0,
+                    segment: bool = True,
+                    relabel_seg: bool | int = False,
                     channel_last: bool = True,
-                    subjects: Iterable[int] | None = None, 
-                    feature_list: list = None, 
-                    feature_dic: dict = None) -> OfflineDataHandler:
+                    subjects: Iterable[int] | None = None) -> OfflineDataHandler:
         """Return processed EPN100 dataset as LibEMG ODH.
 
         Parameters
@@ -320,10 +282,10 @@ class EMGEPN100(Dataset):
             Windows size in ms (for feature extraction). There are two different sensors used in this dataset with different sampling rates.
         stride_ms: float or None (optional), default=None 
             Window stride (increment) size in ms (for feature extraction). There are two different sensors used in this dataset with different sampling rates.
-        segment: bool, default=False 
+        segment: bool, default=True 
             Whether crop the segment before 'pointGestureBeging' index in the dataset.
-        relabel_seg: int, default=0 
-            If 'segment' is True, this arg will be used as the relabeling value.
+        relabel_seg: bool or int, default=0 
+            If not False, this arg will be used as the relabeling value.
         channel_last: bool, default=True,
             Shape will be (, T, CH) if True otherwise (, CH, T)
         subjects: Iterable[int] or None (optional), default=None
@@ -331,8 +293,8 @@ class EMGEPN100(Dataset):
 
         Returns
         ----------
-        dictionary or ODH
-            A dictionary of 'All', 'Train' and 'Test' ODHs of processed data or a single 'ODH' if split is False.
+        Dic or OfflineDataHandler
+            A dictionary of 'All', 'Train' and 'Test' ODHs of processed data or a single OfflineDataHandler if split is False.
         """
         print('\nPlease cite: ' + self.citation+'\n')
         if (not self.check_exists(self.dataset_folder)) and \
@@ -344,12 +306,28 @@ class EMGEPN100(Dataset):
         if (not self.check_exists( self.dataset_folder + "PROCESSED")):
             process_dataset(self.dataset_folder, self.dataset_folder + "PROCESSED")
 
-        odh_tr, odh_te = self._get_odh(self, self.dataset_folder + "PROCESSED", 
-                            subjects, segment, relabel_seg, window_ms, stride_ms, 
-                            channel_last, feature_list, feature_dic)
+        odh_tr, odh_te = self._get_odh(self.dataset_folder + "PROCESSED", 
+                                    subjects, segment, relabel_seg, channel_last)
         
         return {'All': odh_tr + odh_te, 'Train': odh_tr, 'Test': odh_te} \
                 if split else odh_tr + odh_te
+    
+    def get_device_ID(self, device_name: str):
+        """
+        Get device label ID by name
+        
+        Parameters
+        ----------
+        device_name: str
+            Name of the requested device.
+            
+        Returns
+        ----------
+        int
+            Device's ID
+        """
+
+        return DEVICE_MAP[device_name]
 
 
 
