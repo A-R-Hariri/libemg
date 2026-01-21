@@ -5,14 +5,14 @@ from libemg.feature_extractor import FeatureExtractor
 from libemg.utils import *
 import os
 import warnings
-from typing import Any, Dict
+from typing import Any, Dict, Iterable
 import h5py
 import numpy as np
 from scipy.io import loadmat
 
 
-# FIXED GLOBAL GESTURE MAP (LOCKED)
-GESTURE_MAP: Dict[str, int] = {         # Matches EPN-612 Class IDs
+# FIXED GLOBAL GESTURE MAP
+GESTURE_MAP = {         # Matches EPN-612 Class IDs
     "relax": 0,
     "fist": 1,
     "wave in": 2,
@@ -44,16 +44,20 @@ GESTURE_ORDER_180 = (
 )
 assert len(GESTURE_ORDER_180) == 180
 
+# Assigning integer labels to devices
+DEVICE_MAP = {
+    "myo": 0,
+    "gForce": 1,
+}
+
 
 ############ UTILS ############
-
-def to_scalar(x: Any) -> Any:
+def to_scalar(x):
     if isinstance(x, np.ndarray) and x.size == 1:
         return x.item()
     return x
 
-
-def write_h5_scalar(group: h5py.Group, name: str, value: Any):
+def write_h5_scalar(group: h5py.Group, name, value):
     name = str(name)
     value = to_scalar(value)
 
@@ -65,9 +69,8 @@ def write_h5_scalar(group: h5py.Group, name: str, value: Any):
 
 
 ############ METADATA EXTRACTION ############
-
 def extract_metadata(userData) -> Dict[str, Any]:
-    meta: Dict[str, Any] = {}
+    meta = {}
 
     def extract_struct(section):
         out = {}
@@ -84,17 +87,14 @@ def extract_metadata(userData) -> Dict[str, Any]:
     return meta
 
 
-############ CORE PROCESSING ############
-
+# ======== CORE PROCESSING ========
 def process_user(
     mat_path: str,
     out_path: str,
     subject_id: int,
-    is_training_group: bool,
-):
-    userData = loadmat(
-        mat_path, squeeze_me=True, struct_as_record=False
-    )["userData"]
+    is_training_group: bool):
+    userData = loadmat(mat_path, squeeze_me=True, 
+                       struct_as_record=False)["userData"]
 
     reps_written = 0
 
@@ -146,15 +146,12 @@ def process_user(
         if is_training_group and hasattr(userData, "testing"):
             process_block(userData.testing, rep_offset=180, max_reps=180)
 
-    print(
-        f"Finished user subject={subject_id} | "
-        f"reps extracted={reps_written} | "
-        f"output={out_path}"
-    )
+    print(f"Finished user subject={subject_id} | "
+            f"reps extracted={reps_written} | "
+            f"output={out_path}")
 
 
 ############ DATASET WALKER ############
-
 def process_dataset(root_in: str, root_out: str):
     for split in ["training", "testing"]:
         in_split = os.path.join(root_in, split)
@@ -172,32 +169,17 @@ def process_dataset(root_in: str, root_out: str):
 
             print(f"Starting {user_dir} -> subject={subject_id}")
 
-            process_user(
-                mat_path=mat_path,
-                out_path=out_path,
-                subject_id=subject_id,
-                is_training_group=(split == "training"),
-            )
+            process_user(mat_path=mat_path, out_path=out_path,
+                        subject_id=subject_id, 
+                        is_training_group=(split == "training"))
 class EMGEPN100(Dataset):
-    def __init__(self, dataset_folder: str = 'DATASET_85'):
+    def __init__(self, dataset_folder: str='DATASET_85'):
         super().__init__(self, 
                          smapling=(200, 500), 
                          num_channels=(8, 8), 
                          recording_device=('Myo', 'gForce'), 
                          num_subjects=85, 
-                         gestures= {  
-                            "relax": 0,       # Matches EPN-612 static classes IDs
-                            "fist": 1,
-                            "wave in": 2,
-                            "wave out": 3,
-                            "open": 4,
-                            "pinch": 5,
-                            "up": 6,
-                            "down": 7,
-                            "left": 8,
-                            "right": 9,
-                            "forward": 10,
-                            "backward": 11,}, 
+                         gestures= GESTURE_MAP,      # Matches EPN-612 static classes IDs
                          num_reps="30 Reps x 12 Gestures x 43 Users (Train group), 15 Reps x 12 Gestures x 42 Users (Test group) --> Cross User Split",
                          description="EMG dataset for 12 different hand gesture categories using the Myo armband and the G-force armband.", 
                          citation="https://doi.org/10.3390/s22249613")
@@ -205,14 +187,170 @@ class EMGEPN100(Dataset):
         self.dataset_folder = dataset_folder
         self.url = "https://laboratorio-ia.epn.edu.ec/es/recursos/dataset/emg-imu-epn-100"
 
-    def prepare_data(self, split = True, subjects = None):
+    def _get_odh(self, processed_root, subjects, segment,
+                    relabel_seg, window_ms, stride_ms, 
+                    channel_first, feature_list, feature_dic):
+        
+        if feature_list or window_ms or stride_ms:
+            assert feature_list
+            assert window_ms
+            assert stride_ms
+            fe = FeatureExtractor()
+
+        splits = {"training", "testing"}
+        odhs = []
+
+        for split in splits:
+            split_dir = os.path.join(processed_root, split)
+            user_files = sorted(f for f in os.listdir(split_dir) if f.endswith(".h5"))
+
+            for user_file in user_files:
+                path = os.path.join(split_dir, user_file)
+
+                with h5py.File(path, "r") as f:
+                    subject = int(f["reps"]["rep_000"]["subject"][()])
+                    subject += 43 if split == "testing" else 0
+                    if subject is not None:
+                        if subject not in subjects:
+                            continue
+
+                    reps = f["reps"]
+                    device_str = f["meta/deviceInfo/DeviceType"][()].decode("utf-8")
+                    device = DEVICE_MAP[device_str]
+                    fs = float(f["meta/deviceInfo/emgSamplingRate"][()])
+
+                    win_len = int(np.ceil(window_ms * fs / 1000.0))
+                    stride_len = int(np.ceil(stride_ms * fs / 1000.0))
+
+                    if win_len <= 0 or stride_len <= 0:
+                        raise ValueError("Window or stride length <= 0 samples")
+
+                    for rep_name in reps:
+                        rep_grp = reps[rep_name]
+
+                        gst = int(rep_grp["gesture"][()])
+                        rep_id = int(rep_grp["rep"][()])
+
+                        _emg = rep_grp["emg"][:].astype(np.float32, copy=False)      # [T, CH]
+                        if channel_first:
+                            _emg = np.transpose(_emg, (0, 2, 1))                      # [CH, T]
+
+                        if segment and gst != 0:
+                            point_begin =  int(f["meta/deviceInfo/pointGestureBeging"][()])
+                            emg = _emg[point_begin:]
+
+                        # ---- Preparing ODH ----
+                        odh = OfflineDataHandler()
+                        odh.subjects = []
+                        odh.classes = []
+                        odh.reps = []
+                        odh.devices = []
+                        odh.sampling_rates = []
+
+                        if feature_list:
+                            T = emg.shape[0]
+                            if T < win_len:
+                                continue
+
+                            odh.data.append(fe.extract_features(feature_list, get_windows(emg, win_len, win_len), 
+                                                                   feature_dic=feature_dic, array=True))                
+                            odh.classes.append(np.ones((len(odh.data[-1]), 1), dtype=np.int64) * gst)
+                            odh.subjects.append(np.ones((len(odh.data[-1]), 1), dtype=np.int64) * subject)
+                            odh.reps.append(np.ones((len(odh.data[-1]), 1), dtype=np.int64) * rep_id)
+                            odh.devices.append(np.ones((len(odh.data[-1]), 1), dtype=np.int64) * device)
+                            odh.sampling_rates.append(np.ones((len(odh.data[-1]), 1), dtype=np.int64) * fs)
+
+                        else:
+                            odh.data.append(emg)
+                            odh.classes.append(np.ones((len(emg), 1)) * gst)
+                            odh.subjects.append(np.ones((len(emg), 1)) * subject)
+                            odh.reps.append(np.ones((len(emg), 1)) * rep_id)
+                            odh.devices.append(np.ones((len(emg), 1)) * device)
+                            odh.sampling_rates.append(np.ones((len(emg), 1)) * fs)
+
+                        if segment and gst != 0:
+                            assert isinstance(relabel_seg, int)
+                            gst = relabel_seg
+
+                            emg = _emg[:point_begin]
+
+                            if feature_list:
+                                T = emg.shape[0]
+                                if T < win_len:
+                                    continue
+
+                                odh.data.append(fe.extract_features(feature_list, get_windows(emg, win_len, win_len), 
+                                                                    feature_dic=feature_dic, array=True))                
+                                odh.classes.append(np.ones((len(odh.data[-1]), 1), dtype=np.int64) * gst)
+                                odh.subjects.append(np.ones((len(odh.data[-1]), 1), dtype=np.int64) * subject)
+                                odh.reps.append(np.ones((len(odh.data[-1]), 1), dtype=np.int64) * rep_id)
+                                odh.devices.append(np.ones((len(odh.data[-1]), 1), dtype=np.int64) * device)
+                                odh.sampling_rates.append(np.ones((len(odh.data[-1]), 1), dtype=np.int64) * fs)
+
+                            else:
+                                odh.data.append(emg)
+                                odh.classes.append(np.ones((len(emg), 1)) * gst)
+                                odh.subjects.append(np.ones((len(emg), 1)) * subject)
+                                odh.reps.append(np.ones((len(emg), 1)) * rep_id)
+                                odh.devices.append(np.ones((len(emg), 1)) * device)
+                                odh.sampling_rates.append(np.ones((len(emg), 1)) * fs)
+
+            odhs.append(odh)
+
+        return odhs
+
+
+    def prepare_data(self,
+                    split: bool = False,
+                    window_ms: float | None = None,
+                    stride_ms: float | None = None,
+                    segment: bool = False,
+                    relabel_seg: int = 0,
+                    channel_last: bool = True,
+                    subjects: Iterable[int] | None = None, 
+                    feature_list: list = None, 
+                    feature_dic: dict = None) -> OfflineDataHandler:
+        """Return processed EPN100 dataset as LibEMG ODH.
+
+        Parameters
+        ----------
+        split: bool or None (optional), default=False 
+            Whether to return seperate training and testing ODHs.
+        window_ms: float or None (optional), default=None 
+            Windows size in ms (for feature extraction). There are two different sensors used in this dataset with different sampling rates.
+        stride_ms: float or None (optional), default=None 
+            Window stride (increment) size in ms (for feature extraction). There are two different sensors used in this dataset with different sampling rates.
+        segment: bool, default=False 
+            Whether crop the segment before 'pointGestureBeging' index in the dataset.
+        relabel_seg: int, default=0 
+            If 'segment' is True, this arg will be used as the relabeling value.
+        channel_last: bool, default=True,
+            Shape will be (, T, CH) if True otherwise (, CH, T)
+        subjects: Iterable[int] or None (optional), default=None
+            Subjects to be included in the processed dataset.
+
+        Returns
+        ----------
+        dictionary or ODH
+            A dictionary of 'All', 'Train' and 'Test' ODHs of processed data or a single 'ODH' if split is False.
+        """
         print('\nPlease cite: ' + self.citation+'\n')
-        if (not self.check_exists(self.dataset_folder)):
+        if (not self.check_exists(self.dataset_folder)) and \
+            (not self.check_exists( self.dataset_folder + "PROCESSED")):
             raise FileNotFoundError("Please download the EPN100+ dataset from: {} "
                                     "and place 'testing' and 'training' folders inside: "
                                     "'{}' folder.".format(self.url, self.dataset_folder)) 
         
-        process_dataset("DATASET_85", "DATASET_PROCESSED")
+        if (not self.check_exists( self.dataset_folder + "PROCESSED")):
+            process_dataset(self.dataset_folder, self.dataset_folder + "PROCESSED")
+
+        odh_tr, odh_te = self._get_odh(self, self.dataset_folder + "PROCESSED", 
+                            subjects, segment, relabel_seg, window_ms, stride_ms, 
+                            channel_last, feature_list, feature_dic)
+        
+        return {'All': odh_tr + odh_te, 'Train': odh_tr, 'Test': odh_te} \
+                if split else odh_tr + odh_te
+
 
 
 
