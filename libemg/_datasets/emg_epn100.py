@@ -178,15 +178,15 @@ def process_dataset(root_in: str, root_out: str):
 class EMGEPN100(Dataset):
     def __init__(self, dataset_folder: str='DATASET_85'):
         Dataset.__init__(self, 
-                         sampling={'Myo': 200, 'gForce': 500}, 
-                         num_channels={'Myo': 8, 'gForce': 8}, 
-                         recording_device=['Myo', 'gForce'], 
+                         sampling={'myo': 200, 'gForce': 500}, 
+                         num_channels={'myo': 8, 'gForce': 8}, 
+                         recording_device=['myo', 'gForce'], 
                          num_subjects=85, 
                          gestures= GESTURE_MAP,      # Matches EPN-612 static classes IDs
                          num_reps="30 Reps x 12 Gestures x 43 Users (Train group), 15 Reps x 12 Gestures x 42 Users (Test group) --> Cross User Split",
-                         description="EMG dataset for 12 different hand gesture categories using the Myo armband and the G-force armband.", 
+                         description="EMG dataset for 12 different hand gesture categories using the myo armband and the G-force armband.", 
                          citation="https://doi.org/10.3390/s22249613")
-        self.resolution_bit = {'Myo': 8, 'gForce': 12}
+        self.resolution_bit = {'myo': 8, 'gForce': 12}
         self.dataset_folder = dataset_folder
         self.url = "https://laboratorio-ia.epn.edu.ec/es/recursos/dataset/emg-imu-epn-100"
 
