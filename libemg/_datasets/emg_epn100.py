@@ -184,7 +184,7 @@ class EMGEPN100(Dataset):
                          num_subjects=85, 
                          gestures= GESTURE_MAP,      # Matches EPN-612 static classes IDs
                          num_reps="30 Reps x 12 Gestures x 43 Users (Train group), 15 Reps x 12 Gestures x 42 Users (Test group) --> Cross User Split",
-                         description="EMG dataset for 12 different hand gesture categories using the myo armband and the G-force armband.", 
+                         description="Multi-hardware EMG dataset for 12 different hand gesture categories using the myo armband and the G-force armband.", 
                          citation="https://doi.org/10.3390/s22249613")
         self.resolution_bit = {'myo': 8, 'gForce': 12}
         self.dataset_folder = dataset_folder
