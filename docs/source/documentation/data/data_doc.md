@@ -81,7 +81,7 @@ https://github.com/LibEMG/OneSubjectEMaGerDataset
 <br>
 
 **Dataset Description:**
-Multi-hardware EMG dataset for 12 different hand gesture categories using the myo armband and the G-force armband.
+Multi-hardware EMG dataset for 12 different hand gesture categories using the Myo armband and the G-force armband.
 
 | Attribute         | Description                                                                                          |
 |-------------------|------------------------------------------------------------------------------------------------------|
@@ -120,7 +120,6 @@ https://laboratorio-ia.epn.edu.ec/es/recursos/dataset/emg-imu-epn-100
 	url = {https://doi.org/10.3390/s22249613},
 }
 ```
-
 </details>
 </br>
 
@@ -799,7 +798,6 @@ https://github.com/LibEMG/WS_CIIL
 
 </details>
 </br>
-
 
 ## Regression 
 
