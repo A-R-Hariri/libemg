@@ -134,33 +134,78 @@ class FeatureExtractor:
             return self._format_data(feats)
         return feats 
 
-    def extract_features(self, feature_list, windows, feature_dic={}, array=False, normalize=False, normalizer=None, fix_feature_errors=False):
+    def extract_features(self, feature_list, windows, feature_dic={}, array=False, normalize=False, normalizer=None, fix_feature_errors=False, discrete=False):
         """Extracts a list of features.
-        
+
         Parameters
         ----------
         feature_list: list
-            The group of features to extract. Run get_feature_list() or checkout the API documentation 
-            to find an up-to-date feature list.  
-        windows: list 
+            The group of features to extract. Run get_feature_list() or checkout the API documentation
+            to find an up-to-date feature list.
+        windows: list
             A list of windows - should be computed directly from the OfflineDataHandler or the utils.get_windows() method.
         feature_dic: dict
             A dictionary containing the parameters you'd like passed to each feature. ex. {"MDF_sf":1000}
-        array: bool (optional), default=False 
+        array: bool (optional), default=False
             If True, the dictionary will get converted to a list.
         normalize: bool (optional), default=False
             If True, the features will be normalized between using sklearn StandardScaler. The returned object will be a list.
         normalizer: StandardScaler, default=None
-            This should be set to the output from feature extraction on the training data. Do not normalize testing features without this as this could be considered information leakage. 
+            This should be set to the output from feature extraction on the training data. Do not normalize testing features without this as this could be considered information leakage.
         fix_feature_errors: bool (optional), default=False
             If true, fixes all feature errors (NaN=0, INF=0, -INF=0).
+        discrete: bool (optional), default=False
+            If True, windows is expected to be a list of templates (from parse_windows with discrete=True).
+            Features will be extracted for each template separately and returned as a list.
+            Note: Normalization is not currently supported in discrete mode.
+
         Returns
         ----------
-        dictionary or list 
-            A dictionary where each key is a specific feature and its value is a list of the computed 
-            features for each window.
-        StandardScaler
-            If normalize is true it will return the normalizer object. This should be passed into the feature extractor for test data.
+        dictionary or np.ndarray
+            When discrete=False: A dictionary where each key is a specific feature and its value is a list
+            of the computed features for each window. If array=True, returns a np.ndarray instead.
+            When discrete=True: A list of dictionaries/arrays (one per template). If array=True, each
+            element is a np.ndarray.
+        tuple (np.ndarray, StandardScaler)
+            If normalize=True (only supported when discrete=False), returns a tuple of (features array, scaler).
+            The scaler should be passed into the feature extractor for test data.
+        """
+        if discrete:
+            if normalize:
+                raise ValueError("Normalization is not currently supported in discrete mode.")
+            # Handle discrete mode: windows is a list of templates
+            all_features = []
+            for template in windows:
+                template_features = self._extract_features_single(feature_list, template, feature_dic, array, fix_feature_errors)
+                all_features.append(template_features)
+            return all_features
+
+        return self._extract_features_single(feature_list, windows, feature_dic, array, fix_feature_errors, normalize, normalizer)
+
+    def _extract_features_single(self, feature_list, windows, feature_dic={}, array=False, fix_feature_errors=False, normalize=False, normalizer=None):
+        """Internal method to extract features from a single set of windows.
+
+        Parameters
+        ----------
+        feature_list: list
+            The group of features to extract.
+        windows: np.ndarray
+            A 3D array of windows with shape (num_windows, num_channels, window_size).
+        feature_dic: dict
+            A dictionary containing the parameters you'd like passed to each feature.
+        array: bool (optional), default=False
+            If True, the dictionary will get converted to a list.
+        fix_feature_errors: bool (optional), default=False
+            If true, fixes all feature errors (NaN=0, INF=0, -INF=0).
+        normalize: bool (optional), default=False
+            If True, the features will be normalized.
+        normalizer: StandardScaler, default=None
+            The normalizer to use for normalization.
+
+        Returns
+        ----------
+        dictionary or np.ndarray
+            The extracted features.
         """
         features = {}
         scaler = None
@@ -184,7 +229,7 @@ class FeatureExtractor:
                 features = scaler.fit_transform(features)
             else:
                 features = normalizer.transform(features)
-            return features, scaler 
+            return features, scaler
         return features 
 
     def check_features(self, features, silent=False):

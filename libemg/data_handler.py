@@ -424,44 +424,74 @@ class OfflineDataHandler(DataHandler):
         return active_labels
     
     def parse_windows(self, window_size, window_increment, metadata_operations=None, 
-                      multi_rate=False, sampling_rate_key='sampling_rates'):
+                      discrete=False, multi_rate=False, sampling_rate_key='sampling_rates'):
         """Parses windows based on the acquired data from the get_data function.
 
         Parameters
         ----------
         window_size: int
-            The number of samples in a window. 
+            The number of samples in a window.
         window_increment: int
             The number of samples that advances before next window.
-        metadata_operations: dict or None (optional),default=None
+        metadata_operations: dict or None (optional), default=None
             Specifies which operations should be performed on metadata attributes when performing windowing. By default,
             all metadata is stored as its mode in a window. To change this behaviour, specify the metadata attribute as the key and
             the operation as the value in the dictionary. The operation (value) should either be an accepted string (mean, median, last_sample) or
             a function handle that takes in an ndarray of size (window_size, ) and returns a single value to represent the metadata for that window. Passing in a string
             will map from that string to the specified operation. The windowing of only the attributes specified in this dictionary will be modified - all other
             attributes will default to the mode. If None, all attributes default to the mode. Defaults to None.
+        discrete: bool (optional), default=False
+            If True, keeps windows from each file/rep separate instead of concatenating them.
+            Useful for discrete gesture recognition where each rep should be treated independently.
         multi_rate: bool default=False
-            Should be True if the dataset contains sensors with different sampling rates, then window_size, window_increment must be in ms.
+            Should be True if the dataset contains sensors with different sampling rates, then window_size, 
+            window_increment must be in ms. Ignored if discrete = True.
         sampling_rate_key: str, default='sampling_rates'
-            the key in metadat where sampling frequency is stored. Used if multi_rate is True.
+            the key in metadat where sampling frequency is stored. Used if multi_rate is True. Ignored if discrete = True.
         
         Returns
         ----------
-        list
-            A list of size windows x channels x samples. If multi_rate is True, windows size will varry
+        If discrete=False (default):
+            np.ndarray
+                A np.ndarray of size windows x channels x samples. A list if multi_rate is True, windows size will varry
             since the window size will be based on time for multiple sampling rates.
-        list
-            A dictionary containing np.ndarrays for each metadata tag of the dataset. Each window will
-            have an associated value for each metadata. Therefore, the dimensions of the metadata should be Wx1 for each field.
-            If multi_rate is True, Each key will contain a list of the same size as windows.
+            dict
+                A dictionary containing np.ndarrays for each metadata tag of the dataset. Each window will
+                have an associated value for each metadata. Therefore, the dimensions of the metadata should be Wx1 for each field.
+                If multi_rate is True, Each key will contain a list of the same size as windows.
+
+        If discrete=True:
+            list
+                A list of np.ndarrays, one per file/rep. Each array has shape (num_windows, channels, samples).
+            dict
+                A dictionary containing np.ndarrays for each metadata tag. Each template/rep will have one
+                associated value for each metadata (the mode across windows). Dimensions are Tx1 where T is the number of templates.
         """
 
-        if multi_rate:
+        if multi_rate and not discrete:
             return self._multi_rate_parse_windows_helper(window_size, window_increment, metadata_operations, sampling_rate_key)
 
-        return self._parse_windows_helper(window_size, window_increment, metadata_operations)
+        return self._parse_windows_helper(window_size, window_increment, metadata_operations, discrete)
 
-    def _parse_windows_helper(self, window_size, window_increment, metadata_operations):
+    def _parse_windows_helper(self, window_size, window_increment, metadata_operations, discrete=False):
+        """Internal helper for parse_windows.
+
+        Parameters
+        ----------
+        window_size: int
+            The number of samples in a window.
+        window_increment: int
+            The number of samples that advances before next window.
+        metadata_operations: dict or None
+            Operations to perform on metadata attributes during windowing.
+        discrete: bool, default=False
+            If True, keeps windows from each file/rep separate.
+
+        Returns
+        -------
+        tuple
+            Windows and metadata dictionary.
+        """
         common_metadata_operations = {
             'mean': np.mean,
             'median': np.median,
@@ -469,33 +499,43 @@ class OfflineDataHandler(DataHandler):
         }
         window_data = []
         metadata = {k: [] for k in self.extra_attributes}
+
         for i, file in enumerate(self.data):
             # emg data windowing
-            window_data.append(get_windows(file,window_size,window_increment))
-    
+            file_windows = get_windows(file, window_size, window_increment)
+            window_data.append(file_windows)
+
             for k in self.extra_attributes:
-                if type(getattr(self,k)[i]) != np.ndarray:
-                    file_metadata = np.ones((window_data[-1].shape[0])) * getattr(self, k)[i]
+                if type(getattr(self, k)[i]) != np.ndarray:
+                    attr_metadata = np.ones((file_windows.shape[0])) * getattr(self, k)[i]
                 else:
                     if metadata_operations is not None:
                         if k in metadata_operations.keys():
                             # do the specified operation
                             operation = metadata_operations[k]
-                            
+
                             if isinstance(operation, str):
                                 try:
                                     operation = common_metadata_operations[operation]
                                 except KeyError as e:
                                     raise KeyError(f"Unexpected metadata operation string. Please pass in a function or an accepted string {tuple(common_metadata_operations.keys())}. Got: {operation}.")
-                            file_metadata = _get_fn_windows(getattr(self,k)[i], window_size, window_increment, operation)
+                            attr_metadata = _get_fn_windows(getattr(self, k)[i], window_size, window_increment, operation)
                         else:
-                            file_metadata = _get_mode_windows(getattr(self,k)[i], window_size, window_increment)
+                            attr_metadata = _get_mode_windows(getattr(self, k)[i], window_size, window_increment)
                     else:
-                        file_metadata = _get_mode_windows(getattr(self,k)[i], window_size, window_increment)
-                
-                metadata[k].append(file_metadata)
-            
-        return np.vstack(window_data), {k: np.concatenate(metadata[k], axis=0) for k in metadata.keys()}
+                        attr_metadata = _get_mode_windows(getattr(self, k)[i], window_size, window_increment)
+
+                if discrete:
+                    # For discrete mode, take single value per template (mode of all windows)
+                    values, counts = np.unique(attr_metadata, return_counts=True)
+                    metadata[k].append(values[np.argmax(counts)])
+                else:
+                    metadata[k].append(attr_metadata)
+
+        if discrete:
+            return window_data, {k: np.array(metadata[k]) for k in metadata.keys()}
+        else:
+            return np.vstack(window_data), {k: np.concatenate(metadata[k], axis=0) for k in metadata.keys()}
 
     def _multi_rate_parse_windows_helper(self, window_ms, stride_ms, metadata_operations,
                                           sampling_rate_key='sampling_rates'):

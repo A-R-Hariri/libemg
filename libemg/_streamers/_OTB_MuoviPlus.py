@@ -6,7 +6,7 @@ import atexit
 
 from multiprocessing import Event, Process
 from libemg.shared_memory_manager import SharedMemoryManager
-from crc.crc import Crc8, CrcCalculator
+from crc import Crc8, CrcCalculator
 
 """
 OT Bioelettronica

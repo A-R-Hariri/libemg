@@ -73,3 +73,4 @@ sifibridge-*
 TEST.ipynb
 /DATASET_85
 /DATASET_85PROCESSED
+*.model
