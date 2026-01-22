@@ -1242,3 +1242,155 @@ class OnlineEMGRegressor(OnlineStreamer):
         
         _ = FuncAnimation(fig, partial(update, decision_horizon_predictions=[], timestamps=[]), interval=5, blit=False)  # must return value or animation won't work
         plt.show()
+
+
+class OnlineDiscreteClassifier:
+    """OnlineDiscreteClassifier.
+
+    Real-time discrete gesture classifier that detects individual gestures from EMG data.
+    Unlike continuous classifiers, this classifier is designed for detecting discrete,
+    transient gestures and outputs a prediction only when a gesture is detected.
+
+    Parameters
+    ----------
+    odh: OnlineDataHandler
+        An online data handler object for streaming EMG data.
+    model: object
+        A trained model with a predict_proba method (e.g., from libemg discrete models).
+    window_size: int
+        The number of samples in a window.
+    window_increment: int
+        The number of samples that advances before the next window.
+    null_label: int
+        The label corresponding to the null/no gesture class.
+    feature_list: list or None
+        A list of features that will be extracted during real-time classification.
+        Pass in None if the model expects raw windowed data.
+    template_size: int
+        The maximum number of samples to use for gesture template matching.
+    min_template_size: int, default=None
+        The minimum number of samples required before attempting classification.
+        If None, defaults to template_size.
+    key_mapping: dict, default=None
+        A dictionary mapping gesture names to keyboard keys for automated key presses.
+        Requires pyautogui to be installed.
+    feature_dic: dict, default=None
+        A dictionary containing feature extraction parameters.
+    gesture_mapping: dict, default=None
+        A dictionary mapping class indices to gesture names for debug output.
+    rejection_threshold: float, default=0.0
+        The confidence threshold (0-1). Predictions with confidence below this
+        threshold will be rejected and treated as null gestures.
+    debug: bool, default=True
+        If True, prints accepted gestures with timestamps and confidence values.
+    buffer_size: int, default=1
+        Number of successive predictions to buffer before accepting a gesture.
+        When buffer_size > 1, the mode (most frequent prediction) across the buffer
+        is used to determine the final prediction. This helps filter noisy predictions.
+    """
+
+    def __init__(
+        self,
+        odh,
+        model,
+        window_size,
+        window_increment,
+        null_label,
+        feature_list,
+        template_size,
+        min_template_size=None,
+        key_mapping=None,
+        feature_dic={},
+        gesture_mapping=None,
+        rejection_threshold=0.0,
+        debug=True,
+        buffer_size=1
+    ):
+        self.odh = odh
+        self.window_size = window_size
+        self.window_increment = window_increment
+        self.feature_list = feature_list
+        self.model = model
+        self.null_label = null_label
+        self.template_size = template_size
+        self.min_template_size = min_template_size if min_template_size is not None else template_size
+        self.key_mapping = key_mapping
+        self.feature_dic = feature_dic
+        self.gesture_mapping = gesture_mapping
+        self.rejection_threshold = rejection_threshold
+        self.debug = debug
+        self.buffer_size = buffer_size
+        self.prediction_buffer = deque(maxlen=buffer_size)
+        self.fe = FeatureExtractor()
+
+    def run(self):
+        """Run the main gesture detection loop.
+
+        Continuously monitors EMG data and detects discrete gestures. Uses predict_proba
+        to apply an optional rejection threshold. When buffer_size > 1, takes the mode
+        across multiple successive predictions before accepting a gesture.
+
+        The loop runs indefinitely until interrupted. When a gesture is detected and
+        accepted (passes rejection threshold and buffer consensus), the data handler
+        is reset and the prediction buffer is cleared.
+        """
+        expected_count = self.min_template_size
+
+        while True:
+            # Get and process EMG data
+            _, counts = self.odh.get_data(self.window_size)
+            if counts['emg'][0][0] >= expected_count:
+                data, _ = self.odh.get_data(self.template_size)
+                emg = data['emg'][::-1]
+                feats = get_windows(emg, window_size=self.window_size, window_increment=self.window_increment)
+                if self.feature_list is not None:
+                    feats = self.fe.extract_features(self.feature_list, feats, array=True, feature_dic=self.feature_dic)
+
+                probas = self.model.predict_proba(np.array([feats]))[0]
+
+                # Get the class with the highest probability
+                pred = np.argmax(probas)
+                confidence = probas[pred]
+
+                # Check rejection threshold
+                if confidence < self.rejection_threshold:
+                    pred = self.null_label
+
+                # Add prediction to buffer
+                self.prediction_buffer.append(pred)
+
+                # Check if buffer is full and compute mode
+                if len(self.prediction_buffer) >= self.buffer_size:
+                    # Get mode of buffer predictions
+                    buffer_list = list(self.prediction_buffer)
+                    mode_result = stats.mode(buffer_list, keepdims=False)
+                    buffered_pred = mode_result[0]
+
+                    if buffered_pred != self.null_label:
+                        if self.debug:
+                            label = self.gesture_mapping[buffered_pred] if self.gesture_mapping else buffered_pred
+                            print(f"{time.time()} ACCEPTED: {label} (Conf: {confidence:.2f})")
+
+                        if self.key_mapping is not None:
+                            self._key_press(buffered_pred)
+
+                        self.odh.reset()
+                        self.prediction_buffer.clear()
+                        expected_count = self.min_template_size
+                    else:
+                        expected_count += self.window_increment
+                else:
+                    expected_count += self.window_increment
+
+    def _key_press(self, pred):
+        """Trigger a keyboard press for the predicted gesture.
+
+        Parameters
+        ----------
+        pred: int
+            The predicted class index to map to a key press.
+        """
+        import pyautogui
+        gesture_name = self.gesture_mapping[pred]
+        if gesture_name in self.key_mapping:
+            pyautogui.press(self.key_mapping[gesture_name])
