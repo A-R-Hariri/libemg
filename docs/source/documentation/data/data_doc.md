@@ -1058,6 +1058,57 @@ https://github.com/LibEMG/UserComplianceDataset
 </br>
 
 
+<!-- ------------- EMGEPN100 -------------------- -->
+<details>
+<summary><b>DS22: EMGEPN100</b></summary>
+
+<br>
+
+**Dataset Description:**
+Multi-hardware EMG dataset for 12 different hand gesture categories using the myo armband and the G-force armband.
+
+| Attribute         | Description                                                                                          |
+|-------------------|------------------------------------------------------------------------------------------------------|
+| **Num Subjects:** | 85                                                                                                  |
+| **Num Reps:**     | 30 Reps x 12 Gestures x 43 Users (Train group), 15 Reps x 12 Gestures x 42 Users (Test group) --> Cross User Split                        |
+| **Classes:**      | <ul><li>0 - No Movement</li><li>1 - Hand Close</li><li>2 - Flexion</li><li>3 - Extension</li><li>4 - Hand Open</li><li>5 - Pinch</li></ul> |
+| **Device:**       | Myo, gForce                                                                                       |
+| **Sampling Rates:** | Myo: 200Hz, gForce: 500Hz                                                                                     |
+| **Auto Download:** | False       |
+
+**Using the Dataset:**
+```Python
+import libemg
+from libemg.datasets import get_dataset_list
+emg_epn100 = libemg.datasets.EMGEPN100() 
+# or get_dataset_list(cross_user=True)['EMGEPN100']()
+odh = emg_epn100.prepare_data(split=True, segment=True, relabel_seg=None, 
+                                    channel_last=True, subjects=None)['All']
+```
+
+**Dataset Location**
+https://laboratorio-ia.epn.edu.ec/es/recursos/dataset/emg-imu-epn-100
+
+**References:**
+```
+@article{vasconez-2022,
+	author = {Vásconez, Juan Pablo and López, Lorena Isabel Barona and Caraguay, Ángel Leonardo Valdivieso and Benalcázar, Marco E.},
+	journal = {Sensors},
+	month = {12},
+	number = {24},
+	pages = {9613},
+	title = {{Hand Gesture Recognition Using EMG-IMU Signals and Deep Q-Networks}},
+	volume = {22},
+	year = {2022},
+	doi = {10.3390/s22249613},
+	url = {https://doi.org/10.3390/s22249613},
+}
+```
+
+</details>
+</br>
+
+
 # Offline Data Handler 
 One overhead for most EMG projects is interfacing with a particular dataset since they often have different folder and file structures. LibEMG provides a means to quickly interface datasets so you can focus on using them with minimal setup time. Assuming the files in the dataset are well formatted (i.e., they include all metadata such as rep, class, and subject) and are either .csv or .txt files, the OfflineDataHandler does all accumulation and processing. To do this, LibEMG relies on regular expressions to define a dataset's file and folder structure. These expressions can be used to create a dictionary that is passed to the OfflineDataHandler. Once the data handler has collected all the files that satisfy the regexes, the dataset can be sliced using the metadata tags (e.g., by rep, subjects, classes, etc.). After extracting the data it is ready to be passed through the rest of the pipeline. The following code snippet exemplifies how to process a dataset with testing/training, rep, and class metadata. In this case the file format is: `dataset/train/R_1_C_1_EMG.csv` where R is the rep and C is the class.
 
