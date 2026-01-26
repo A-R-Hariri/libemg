@@ -12,7 +12,7 @@ with codecs.open(os.path.join(here, "README.md"), encoding="utf-8") as fh:
 # python -m twine upload --repository testpypi dist/* --verbose  <------ testpypi
 #
 
-VERSION = "2.0.1"
+VERSION = "2.0.3"
 DESCRIPTION = "LibEMG - Myoelectric Control Library"
 LONG_DESCRIPTION = "A library for designing and exploring real-time and offline myoelectric control systems."
 
@@ -44,7 +44,8 @@ setup(
         "onedrivedownloader",
         "sifi-bridge-py",
         "pygame",
-        "mindrove"
+        "mindrove",
+        "crc"
     ],
     keywords=[
         "emg",
