@@ -423,7 +423,8 @@ class OfflineDataHandler(DataHandler):
             print(f"{num_relabeled} of {len(active_labels)} active class windows were relabelled to no motion.")
         return active_labels
     
-    def parse_windows(self, window_size, window_increment, metadata_operations=None, discrete=False):
+    def parse_windows(self, window_size, window_increment, metadata_operations=None, discrete=False,
+                      multi_rate=False, sampling_rate_key='sampling_rates'):
         """Parses windows based on the acquired data from the get_data function.
 
         Parameters
@@ -442,6 +443,10 @@ class OfflineDataHandler(DataHandler):
         discrete: bool (optional), default=False
             If True, keeps windows from each file/rep separate instead of concatenating them.
             Useful for discrete gesture recognition where each rep should be treated independently.
+        multi_rate: bool default=False
+            Should be True if the dataset contains sensors with different sampling rates, then window_size, window_increment must be in ms.
+        sampling_rate_key: str, default='sampling_rates'
+            the key in metadata where sampling frequency is stored. Used if multi_rate is True.
 
         Returns
         ----------
@@ -458,7 +463,18 @@ class OfflineDataHandler(DataHandler):
             dict
                 A dictionary containing np.ndarrays for each metadata tag. Each template/rep will have one
                 associated value for each metadata (the mode across windows). Dimensions are Tx1 where T is the number of templates.
+
+        If multi_rate=True:
+            list
+                A list of size windows x channels x samples. Windows size will vary
+                since the window size will be based on time for multiple sampling rates.
+            dict
+                A dictionary containing np.ndarrays for each metadata tag of the dataset. Each window will
+                have an associated value for each metadata. Each key will contain a list of the same size as windows.
         """
+        if multi_rate:
+            return self._multi_rate_parse_windows_helper(window_size, window_increment, metadata_operations, sampling_rate_key)
+
         return self._parse_windows_helper(window_size, window_increment, metadata_operations, discrete)
 
     def _parse_windows_helper(self, window_size, window_increment, metadata_operations, discrete=False):
@@ -525,15 +541,63 @@ class OfflineDataHandler(DataHandler):
         else:
             return np.vstack(window_data), {k: np.concatenate(metadata[k], axis=0) for k in metadata.keys()}
 
+    def _multi_rate_parse_windows_helper(self, window_ms, stride_ms, metadata_operations,
+                                          sampling_rate_key='sampling_rates'):
+        common_metadata_operations = {
+            'mean': np.mean,
+            'median': np.median,
+            'last_sample': lambda x: x[-1]
+        }
+        window_data = []
+        metadata = {k: [] for k in self.extra_attributes}
+        for i, file in enumerate(self.data):
+
+            # Calculating window size and increment based on given time in ms and sensor sampling rate
+            fs = getattr(self,sampling_rate_key)[i][0].item()
+            window_size = int(np.ceil(window_ms * fs / 1000.0))
+            window_increment = int(np.ceil(stride_ms * fs / 1000.0))
+
+            if window_size <= 0 or window_increment <= 0:
+                raise ValueError("Window or stride length <= 0 samples for the given time in ms")
+
+            # emg data windowing
+            window_data.append(get_windows(file,window_size,window_increment))
     
-    def isolate_channels(self, channels):
+            for k in self.extra_attributes:
+                if type(getattr(self,k)[i]) != np.ndarray:
+                    file_metadata = np.ones((window_data[-1].shape[0])) * getattr(self, k)[i]
+                else:
+                    if metadata_operations is not None:
+                        if k in metadata_operations.keys():
+                            # do the specified operation
+                            operation = metadata_operations[k]
+                            
+                            if isinstance(operation, str):
+                                try:
+                                    operation = common_metadata_operations[operation]
+                                except KeyError as e:
+                                    raise KeyError(f"Unexpected metadata operation string. Please pass in a function or an accepted string {tuple(common_metadata_operations.keys())}. Got: {operation}.")
+                            file_metadata = _get_fn_windows(getattr(self,k)[i], window_size, window_increment, operation)
+                        else:
+                            file_metadata = _get_mode_windows(getattr(self,k)[i], window_size, window_increment)
+                    else:
+                        file_metadata = _get_mode_windows(getattr(self,k)[i], window_size, window_increment)
+                
+                metadata[k].append(file_metadata)
+            
+        return window_data, metadata
+    
+    def isolate_channels(self, channels, channel_last=True):
         """Entry point for isolating a certain range of channels. 
 
         Parameters
         ----------
         channels: list
             A list of values (i.e., channels) that you want to isolate. (e.g., [0,1,2]). Indexing starts at 0.
-            
+        
+        channel_first: bool, default=True
+        the order of the Time and Channel axis in data.
+
         Returns
         ----------
         OfflineDataHandler
@@ -547,7 +611,10 @@ class OfflineDataHandler(DataHandler):
         new_odh = copy.deepcopy(self)
         # TODO: Optimize this
         for i in range(0, len(new_odh.data)):
-            new_odh.data[i] = new_odh.data[i][:,channels]
+            if channel_last:
+                new_odh.data[i] = new_odh.data[i][:,channels]
+            else:
+                new_odh.data[i] = new_odh.data[i][channels,:]
         return new_odh
     
     def isolate_data(self, key, values, fast=True):
