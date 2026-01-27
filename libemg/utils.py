@@ -1,11 +1,4 @@
-import os
-
 import numpy as np
-from PIL import Image, UnidentifiedImageError
-import matplotlib.pyplot as plt
-from matplotlib.backends.backend_agg import FigureCanvasAgg
-from matplotlib.patches import Circle
-
 
 def get_windows(data, window_size, window_increment, channel_last=False):
     """Extracts windows from a given set of data.
@@ -19,7 +12,7 @@ def get_windows(data, window_size, window_increment, channel_last=False):
     window_increment: int
         The number of samples that advances before next window.
     channel_last: bool, default=False
-        Output will be NxLxC if True.
+        Output will be NxLxC if True. By default the LibEMG feature extractor assumes default is False.
 
     Returns
     ----------
