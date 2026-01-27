@@ -473,6 +473,8 @@ class OfflineDataHandler(DataHandler):
                 have an associated value for each metadata. Each key will contain a list of the same size as windows.
         """
         if multi_rate:
+            if discrete:
+                raise ValueError("Discrete mode is not supported for multi-rate datasets.")
             return self._multi_rate_parse_windows_helper(window_size, window_increment, metadata_operations, sampling_rate_key)
 
         return self._parse_windows_helper(window_size, window_increment, metadata_operations, discrete)
