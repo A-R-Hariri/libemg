@@ -205,7 +205,7 @@ class EMGEPN100(Dataset):
     def _get_odh(self, processed_root, subjects, 
                  segment, relabel_seg, channel_last):
 
-        splits = {"training", "testing"}
+        splits = ["training", "testing"]
         odhs = []
 
         for split in splits:
@@ -216,9 +216,11 @@ class EMGEPN100(Dataset):
             odh.subjects = []
             odh.classes = []
             odh.reps = []
+            odh.base_class = []
             odh.devices = []
             odh.sampling_rates = []
             odh.extra_attributes = ['subjects', 'classes', 'reps',
+                                    'base_class',
                                     'devices', 'sampling_rates']
 
             for user_file in user_files:
@@ -243,9 +245,7 @@ class EMGEPN100(Dataset):
                         rep_id = int(rep_grp["rep"][()])
 
                         _emg = rep_grp["emg"][:].astype(np.float32, copy=False)      # [T, CH]
-                        if not channel_last:
-                            _emg = np.transpose(_emg, (1, 0))                        # [CH, T]
-
+                        
                         if segment and gst != 0:
                             pb = int(rep_grp["pb"][()])
                             pe = int(rep_grp["pe"][()])
@@ -254,27 +254,51 @@ class EMGEPN100(Dataset):
                             emg = _emg[pb:pe]
                         else:
                             emg = _emg
+                        
+                        if emg.shape[0] == 0:
+                            continue
+                        
+                        if not channel_last:
+                            emg = np.transpose(emg, (1, 0))                        # [CH, T]
 
                         # ---- Preparing ODH ----
                         odh.data.append(emg)
-                        odh.classes.append(np.ones((len(emg), 1)) * gst)
-                        odh.subjects.append(np.ones((len(emg), 1)) * subject)
-                        odh.reps.append(np.ones((len(emg), 1)) * rep_id)
-                        odh.devices.append(np.ones((len(emg), 1)) * device)
-                        odh.sampling_rates.append(np.ones((len(emg), 1)) * fs)
+                        odh.classes.append(np.ones((len(emg), 1), dtype=np.int64) * gst)
+                        odh.subjects.append(np.ones((len(emg), 1), dtype=np.int64) * subject)
+                        odh.reps.append(np.ones((len(emg), 1), dtype=np.int64) * rep_id)
+                        odh.base_class.append(np.ones((len(emg), 1), dtype=np.int64) * gst)
+                        odh.devices.append(np.ones((len(emg), 1), dtype=np.int64) * device)
+                        odh.sampling_rates.append(np.ones((len(emg), 1), dtype=np.int64) * fs)
 
-                        if segment and gst != 0 and relabel_seg is not None:
+                        if segment and gst != 0 and relabel_seg is not None \
+                            and pb is not None and pe is not None:
                             assert type(relabel_seg) is int
-                            gst = relabel_seg
 
-                            emg = _emg[:point_begins]
-
+                            emg = _emg[:pb]
+                            if emg.shape[0] == 0:
+                                continue
+                            if not channel_last:
+                                emg = np.transpose(emg, (1, 0))    
                             odh.data.append(emg)
-                            odh.classes.append(np.ones((len(emg), 1)) * gst)
-                            odh.subjects.append(np.ones((len(emg), 1)) * subject)
-                            odh.reps.append(np.ones((len(emg), 1)) * rep_id)
-                            odh.devices.append(np.ones((len(emg), 1)) * device)
-                            odh.sampling_rates.append(np.ones((len(emg), 1)) * fs)
+                            odh.classes.append(np.ones((len(emg), 1), dtype=np.int64) * relabel_seg)
+                            odh.subjects.append(np.ones((len(emg), 1), dtype=np.int64) * subject)
+                            odh.reps.append(np.ones((len(emg), 1), dtype=np.int64) * rep_id)
+                            odh.base_class.append(np.ones((len(emg), 1), dtype=np.int64) * gst)
+                            odh.devices.append(np.ones((len(emg), 1), dtype=np.int64) * device)
+                            odh.sampling_rates.append(np.ones((len(emg), 1), dtype=np.int64) * fs)
+
+                            emg = _emg[pe:]
+                            if emg.shape[0] == 0:
+                                continue
+                            if not channel_last:
+                                emg = np.transpose(emg, (1, 0))    
+                            odh.data.append(emg)
+                            odh.classes.append(np.ones((len(emg), 1), dtype=np.int64) * relabel_seg)
+                            odh.subjects.append(np.ones((len(emg), 1), dtype=np.int64) * subject)
+                            odh.reps.append(np.ones((len(emg), 1), dtype=np.int64) * rep_id)
+                            odh.base_class.append(np.ones((len(emg), 1), dtype=np.int64) * gst)
+                            odh.devices.append(np.ones((len(emg), 1), dtype=np.int64) * device)
+                            odh.sampling_rates.append(np.ones((len(emg), 1), dtype=np.int64) * fs)
 
             odhs.append(odh)
 
