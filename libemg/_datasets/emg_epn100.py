@@ -129,14 +129,26 @@ def process_user(
                 classe = GESTURE_MAP[gesture]
 
                 emg = np.asarray(entry.emg, dtype=np.float32)
-                point_begins = np.asarray(entry.pointGestureBegins, dtype=np.int64)
+
+                if not hasattr(entry, "groundTruth"):
+                    pb, pe = -1, -1
+
+                else:
+                    gt = np.asarray(entry.groundTruth, dtype=np.uint8)
+                    idx = np.where(gt != 0)[0]
+                    if idx.size == 0:
+                        pb, pe = -1, -1
+                    else:
+                        pb = int(idx[0])
+                        pe = int(idx[-1]) + 1
 
                 rep_grp = reps_grp.create_group(f"rep_{rep_id:03d}")
                 rep_grp.create_dataset("emg", data=emg)
                 rep_grp.create_dataset("gesture", data=classe)
                 rep_grp.create_dataset("subject", data=subject_id)
                 rep_grp.create_dataset("rep", data=rep_id)
-                rep_grp.create_dataset("point_begins", data=point_begins)
+                rep_grp.create_dataset("pb", data=pb)
+                rep_grp.create_dataset("pe", data=pe)
 
                 reps_written += 1
 
@@ -235,8 +247,11 @@ class EMGEPN100(Dataset):
                             _emg = np.transpose(_emg, (1, 0))                        # [CH, T]
 
                         if segment and gst != 0:
-                            point_begins =  rep_grp["point_begins"][()]
-                            emg = _emg[point_begins:]
+                            pb = int(rep_grp["pb"][()])
+                            pe = int(rep_grp["pe"][()])
+                            if pb < 0 or pe < 0:
+                                pb, pe = None, None
+                            emg = _emg[pb:pe]
                         else:
                             emg = _emg
 
