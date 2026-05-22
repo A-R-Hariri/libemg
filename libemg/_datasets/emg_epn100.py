@@ -337,15 +337,15 @@ class EMGEPN100(Dataset):
         """
         print('\nPlease cite: ' + self.citation+'\n')
         if (not self.check_exists(self.dataset_folder)) and \
-            (not self.check_exists( self.dataset_folder + "PROCESSED")):
+            (not self.check_exists(self.dataset_folder + "_PROCESSED")):
             raise FileNotFoundError("Please download the EPN100+ dataset from: {} "
                                     "and place 'testing' and 'training' folders inside: "
                                     "'{}' folder.".format(self.url, self.dataset_folder)) 
         
-        if (not self.check_exists( self.dataset_folder + "PROCESSED")):
-            process_dataset(self.dataset_folder, self.dataset_folder + "PROCESSED")
+        if (not self.check_exists(self.dataset_folder + "_PROCESSED")):
+            process_dataset(self.dataset_folder, self.dataset_folder + "_PROCESSED")
 
-        odh_tr, odh_te = self._get_odh(self.dataset_folder + "PROCESSED", 
+        odh_tr, odh_te = self._get_odh(self.dataset_folder + "_PROCESSED", 
                                     subjects, segment, relabel_seg, channel_last)
         
         return {'All': odh_tr + odh_te, 'Train': odh_tr, 'Test': odh_te} \
@@ -367,8 +367,3 @@ class EMGEPN100(Dataset):
         """
 
         return DEVICE_MAP[device_name]
-
-
-
-
-        
